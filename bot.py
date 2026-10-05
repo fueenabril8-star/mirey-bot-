@@ -15,6 +15,11 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "")
 
+# Validación de variables críticas
+if not DISCORD_TOKEN:
+    print("❌ Error: No se encontró la variable de entorno DISCORD_TOKEN.")
+    exit(1)
+
 # Clientes de IA
 gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
@@ -103,7 +108,7 @@ async def procesar_audio_y_responder_voz(ctx, ruta_audio_input):
         
         response = await asyncio.to_thread(
             gemini_client.models.generate_content,
-            model='gemini-2.5-flash',
+            model='gemini-2.0-flash',
             contents=[archivo_gemini, prompt],
             config=config_gemini
         )
@@ -176,7 +181,7 @@ async def on_message(message):
                             
                             response = await asyncio.to_thread(
                                 gemini_client.models.generate_content,
-                                model='gemini-2.5-flash',
+                                model='gemini-2.0-flash',
                                 contents=[archivo_gemini, prompt],
                                 config=config_gemini
                             )
@@ -238,8 +243,5 @@ async def salir(ctx):
         await ctx.send("Desconectado del canal de voz.")
 
 if __name__ == "__main__":
-    if not DISCORD_TOKEN:
-        print("❌ Error: No se encontró la variable de entorno DISCORD_TOKEN.")
-    else:
-        bot.run(DISCORD_TOKEN)
+    bot.run(DISCORD_TOKEN)
 
