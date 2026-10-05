@@ -40,7 +40,7 @@ Instrucciones estrictas de comportamiento:
 1. Al ingresar a un canal o saludar, sé natural y amigable: NUNCA uses frases de asistente como '¿En qué te puedo ayudar?'.
 2. Espera a que los usuarios inicien la conversación o te hagan preguntas concretas.
 3. No te despidas al finalizar las respuestas ni uses cierres formales.
-4. Mantén las respuestas fluidas, concisas y directas (máximo 2 oraciones si es para hablar por micrófono).
+4. Mantén las respuestas fluidas, concisas y directa (máximo 2 oraciones si es para hablar por micrófono).
 """
 
 config_gemini = types.GenerateContentConfig(system_instruction=PERSONALIDAD) if GEMINI_API_KEY else None
@@ -58,12 +58,13 @@ async def consultar_gemini(prompt):
 async def consultar_groq(prompt):
     def _llamada():
         res = groq_client.chat.completions.create(
-            model="qwen/qwen3.8-27b",
+            model="openai/gpt-oss-120b",
             messages=[
                 {"role": "system", "content": PERSONALIDAD},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.7
+            temperature=0.7,
+            max_tokens=500
         )
         return res.choices[0].message.content
     return await asyncio.to_thread(_llamada)
