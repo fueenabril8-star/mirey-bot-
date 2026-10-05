@@ -45,7 +45,7 @@ config_gemini = types.GenerateContentConfig(system_instruction=PERSONALIDAD) if 
 async def consultar_gemini(prompt):
     response = await asyncio.to_thread(
         gemini_client.models.generate_content,
-        model='gemini-2.0-flash',
+        model='gemini-3.8-flash',
         contents=prompt,
         config=config_gemini
     )
@@ -103,7 +103,7 @@ async def procesar_audio_y_responder_voz(ctx, ruta_audio_input):
         
         response = await asyncio.to_thread(
             gemini_client.models.generate_content,
-            model='gemini-2.5-flash',
+            model='gemini-3.8-flash',
             contents=[archivo_gemini, prompt],
             config=config_gemini
         )
@@ -176,7 +176,7 @@ async def on_message(message):
                             
                             response = await asyncio.to_thread(
                                 gemini_client.models.generate_content,
-                                model='gemini-2.5-flash',
+                                model='gemini-3.8-flash',
                                 contents=[archivo_gemini, prompt],
                                 config=config_gemini
                             )
