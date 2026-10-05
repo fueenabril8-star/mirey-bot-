@@ -11,9 +11,9 @@ import edge_tts  # Reemplazo de gTTS para voz MASCULINA real
 warnings.filterwarnings("ignore", category=UserWarning)
 
 # --- CONFIGURACIÓN DE CLAVES API ---
-GEMINI_API_KEY = os.getenv("AQ.Ab8RN6JlbOM17jr0_cH-O49tQbEc4YAOmdDBmEkIJROZh5cejA", "")
-GROQ_API_KEY = os.getenv("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", "")
-DISCORD_TOKEN = os.getenv("MTU1NTM4NTY2NTMxMzU3MDkzNw.GWEJ-O.JhlMMhOzvmnXWkFxubfYNYNGrTjvLTxAbFddWo", "")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "")
 
 # Clientes de IA
 gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
@@ -241,4 +241,5 @@ if __name__ == "__main__":
     if not DISCORD_TOKEN:
         print("❌ Error: No se encontró la variable de entorno DISCORD_TOKEN.")
     else:
-        bot.run("MTU1NTM4NTY2NTMxMzU3MDkzNw.GWEJ-O.JhlMMhOzvmnXWkFxubfYNYNGrTjvLTxAbFddWo")
+        bot.run(DISCORD_TOKEN)
+
