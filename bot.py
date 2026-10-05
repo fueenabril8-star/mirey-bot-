@@ -8,6 +8,7 @@ from google.genai import types
 from groq import Groq
 import edge_tts  # Reemplazo de gTTS para voz MASCULINA real
 import time
+import random
 
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -25,6 +26,9 @@ gemini_degradado = False  # Flag para trackear si Gemini está degradado
 gemini_degradado_timestamp = 0
 TIEMPO_RECUPERACION = 300  # 5 minutos antes de reintentar Gemini
 
+# Canales donde MiRey participa automáticamente
+CANALES_ACTIVOS = {"vip"}  # En minúsculas para comparación
+
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="$", intents=intents)
@@ -40,7 +44,8 @@ Instrucciones estrictas de comportamiento:
 1. Al ingresar a un canal o saludar, sé natural y amigable: NUNCA uses frases de asistente como '¿En qué te puedo ayudar?'.
 2. Espera a que los usuarios inicien la conversación o te hagan preguntas concretas.
 3. No te despidas al finalizar las respuestas ni uses cierres formales.
-4. Mantén las respuestas fluidas, concisas y directa (máximo 2 oraciones si es para hablar por micrófono).
+4. Mantén las respuestas fluidas, concisas y directas (máximo 2 oraciones si es para hablar por micrófono).
+5. En el canal VIP sé más familiar y participativo, comenta sobre los temas sin necesidad de ser invitado.
 """
 
 config_gemini = types.GenerateContentConfig(system_instruction=PERSONALIDAD) if GEMINI_API_KEY else None
@@ -58,13 +63,12 @@ async def consultar_gemini(prompt):
 async def consultar_groq(prompt):
     def _llamada():
         res = groq_client.chat.completions.create(
-            model="openai/gpt-oss-120b",
+            model="qwen/qwen3.8-27b",
             messages=[
                 {"role": "system", "content": PERSONALIDAD},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.7,
-            max_tokens=500
+            temperature=0.7
         )
         return res.choices[0].message.content
     return await asyncio.to_thread(_llamada)
@@ -176,77 +180,92 @@ async def on_message(message):
         return
 
     ctx = await bot.get_context(message)
-
-    if bot.user in message.mentions or message.attachments:
-        if message.attachments:
-            adjunto = message.attachments[0]
-            if any(adjunto.filename.lower().endswith(ext) for ext in ['.mp3', '.wav', '.ogg', '.m4a']):
-                if ctx.author.voice:
-                    if not ctx.voice_client:
-                        await ctx.author.voice.channel.connect()
+    canal_actual = message.channel.name.lower() if message.channel.name else ""
+    es_canal_activo = canal_actual in CANALES_ACTIVOS
+    
+    # --- MANEJO DE ARCHIVOS ADJUNTOS ---
+    if message.attachments:
+        adjunto = message.attachments[0]
+        if any(adjunto.filename.lower().endswith(ext) for ext in ['.mp3', '.wav', '.ogg', '.m4a']):
+            if ctx.author.voice:
+                if not ctx.voice_client:
+                    await ctx.author.voice.channel.connect()
+                
+                nombre_temp = f"in_{message.id}.ogg"
+                await adjunto.save(nombre_temp)
+                
+                async with ctx.channel.typing():
+                    await procesar_audio_y_responder_voz(ctx, nombre_temp)
+                return
+            else:
+                async with ctx.channel.typing():
+                    nombre_input = f"in_{message.id}.ogg"
+                    nombre_output = f"respuesta_{message.id}.mp3"
+                    archivo_gemini = None
                     
-                    nombre_temp = f"in_{message.id}.ogg"
-                    await adjunto.save(nombre_temp)
-                    
-                    async with ctx.channel.typing():
-                        await procesar_audio_y_responder_voz(ctx, nombre_temp)
-                    return
-                else:
-                    async with ctx.channel.typing():
-                        nombre_input = f"in_{message.id}.ogg"
-                        nombre_output = f"respuesta_{message.id}.mp3"
-                        archivo_gemini = None
+                    try:
+                        await adjunto.save(nombre_input)
+                        archivo_gemini = await asyncio.to_thread(
+                            gemini_client.files.upload,
+                            file=nombre_input
+                        )
                         
-                        try:
-                            await adjunto.save(nombre_input)
-                            archivo_gemini = await asyncio.to_thread(
-                                gemini_client.files.upload,
-                                file=nombre_input
-                            )
-                            
-                            prompt = "Escucha este audio. Responde de forma fluida, directa y concisa (máximo 2 o 3 oraciones)."
-                            
-                            response = await asyncio.to_thread(
-                                gemini_client.models.generate_content,
-                                model='gemini-3.8-flash',
-                                contents=[archivo_gemini, prompt],
-                                config=config_gemini
-                            )
-                            
-                            texto_respuesta = response.text
-                            await generar_audio_mp3(texto_respuesta, nombre_output)
+                        prompt = "Escucha este audio. Responde de forma fluida, directa y concisa (máximo 2 o 3 oraciones)."
+                        
+                        response = await asyncio.to_thread(
+                            gemini_client.models.generate_content,
+                            model='gemini-3.8-flash',
+                            contents=[archivo_gemini, prompt],
+                            config=config_gemini
+                        )
+                        
+                        texto_respuesta = response.text
+                        await generar_audio_mp3(texto_respuesta, nombre_output)
 
-                            await message.channel.send(
-                                content=f"🗣️ **MiRey:** {texto_respuesta}",
-                                file=discord.File(nombre_output)
-                            )
+                        await message.channel.send(
+                            content=f"🗣️ **MiRey:** {texto_respuesta}",
+                            file=discord.File(nombre_output)
+                        )
 
-                        except Exception as e:
-                            await message.channel.send(f"Ocurrió un inconveniente procesando el audio: {e}")
-                        finally:
-                            if archivo_gemini:
-                                try:
-                                    await asyncio.to_thread(gemini_client.files.delete, name=archivo_gemini.name)
-                                except Exception:
-                                    pass
-                            if os.path.exists(nombre_input):
-                                os.remove(nombre_input)
-                            if os.path.exists(nombre_output):
-                                os.remove(nombre_output)
-                    return
-
-        if bot.user in message.mentions:
-            texto_limpio = message.content.replace(f"<@{bot.user.id}>", "").strip()
-            if not texto_limpio:
-                await message.channel.send("Hola. Por aquí ando.")
+                    except Exception as e:
+                        await message.channel.send(f"Ocurrió un inconveniente procesando el audio: {e}")
+                    finally:
+                        if archivo_gemini:
+                            try:
+                                await asyncio.to_thread(gemini_client.files.delete, name=archivo_gemini.name)
+                            except Exception:
+                                pass
+                        if os.path.exists(nombre_input):
+                            os.remove(nombre_input)
+                        if os.path.exists(nombre_output):
+                            os.remove(nombre_output)
                 return
 
+    # --- MENCIONADO DIRECTAMENTE ---
+    if bot.user in message.mentions:
+        texto_limpio = message.content.replace(f"<@{bot.user.id}>", "").strip()
+        if not texto_limpio:
+            await message.channel.send("Hola. Por aquí ando.")
+            return
+
+        async with message.channel.typing():
+            try:
+                respuesta = await consultar_ia(texto_limpio)
+                await message.channel.send(respuesta)
+            except Exception as e:
+                await message.channel.send(f"Ocurrió un inconveniente: {e}")
+        return
+
+    # --- CANAL VIP: PARTICIPACIÓN AUTOMÁTICA (60% de probabilidad) ---
+    if es_canal_activo and message.content and not message.author.bot:
+        # Solo participa en conversaciones naturales (evita spam)
+        if random.random() < 0.6:  # 60% de probabilidad para no ser demasiado spammy
             async with message.channel.typing():
                 try:
-                    respuesta = await consultar_ia(texto_limpio)
+                    respuesta = await consultar_ia(message.content)
                     await message.channel.send(respuesta)
                 except Exception as e:
-                    await message.channel.send(f"Ocurrió un inconveniente: {e}")
+                    print(f"Error en VIP: {e}")
 
     await bot.process_commands(message)
 
