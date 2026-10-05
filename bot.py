@@ -7,6 +7,7 @@ from google import genai
 from google.genai import types
 from groq import Groq
 import edge_tts  # Reemplazo de gTTS para voz MASCULINA real
+import time
 
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -20,6 +21,9 @@ gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
 proveedor_actual = "gemini"
+gemini_degradado = False  # Flag para trackear si Gemini está degradado
+gemini_degradado_timestamp = 0
+TIEMPO_RECUPERACION = 300  # 5 minutos antes de reintentar Gemini
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -65,15 +69,42 @@ async def consultar_groq(prompt):
     return await asyncio.to_thread(_llamada)
 
 async def consultar_ia(prompt):
-    global proveedor_actual
-    if proveedor_actual == "gemini" and gemini_client:
+    global proveedor_actual, gemini_degradado, gemini_degradado_timestamp
+    
+    # Verificar si es hora de reintentar Gemini
+    if gemini_degradado and (time.time() - gemini_degradado_timestamp) > TIEMPO_RECUPERACION:
+        gemini_degradado = False
+        print("🔄 Reintentando con Gemini...")
+    
+    # Intentar con Gemini primero si está disponible
+    if not gemini_degradado and gemini_client:
         try:
             return await consultar_gemini(prompt)
         except Exception as e:
-            if "Quota" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+            error_str = str(e)
+            print(f"❌ Error en Gemini: {error_str}")
+            
+            # Detectar errores de lag/unavailability
+            if any(keyword in error_str for keyword in ["503", "UNAVAILABLE", "high demand", "Quota", "RESOURCE_EXHAUSTED"]):
+                print("⚠️ Gemini está saturado. Cambiando a Groq...")
+                gemini_degradado = True
+                gemini_degradado_timestamp = time.time()
+                
                 if groq_client:
-                    return await consultar_groq(prompt)
+                    try:
+                        return await consultar_groq(prompt)
+                    except Exception as groq_error:
+                        raise Exception(f"Groq fallback también falló: {groq_error}")
             raise e
+    
+    # Usar Groq si Gemini está degradado
+    elif gemini_degradado and groq_client:
+        try:
+            return await consultar_groq(prompt)
+        except Exception as e:
+            print(f"❌ Error en Groq: {e}")
+            raise e
+    
     elif groq_client:
         return await consultar_groq(prompt)
     else:
