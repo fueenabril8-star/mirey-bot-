@@ -52,6 +52,19 @@ INSTRUCCIONES DE COMPORTAMIENTO:
 
 config_gemini = types.GenerateContentConfig(system_instruction=PERSONALIDAD) if GEMINI_API_KEY else None
 
+# --- MAPEO DE MIMETYPES PARA ARCHIVOS DE AUDIO ---
+AUDIO_MIME_TYPES = {
+    '.mp3': 'audio/mpeg',
+    '.wav': 'audio/wav',
+    '.ogg': 'audio/ogg',
+    '.m4a': 'audio/mp4'
+}
+
+def obtener_mime_type(filename):
+    """Obtiene el tipo MIME correcto basado en la extensión del archivo"""
+    ext = os.path.splitext(filename.lower())[1]
+    return AUDIO_MIME_TYPES.get(ext, 'audio/mpeg')
+
 # --- CONSULTA IA ---
 async def consultar_gemini(prompt):
     response = await asyncio.to_thread(
@@ -159,8 +172,10 @@ async def on_message(message):
                         # 1. Guardar el archivo localmente
                         await adjunto.save(nombre_input)
                         
-                        # Definir el tipo de MIME correcto para que Gemini no falle
-                        mime = "audio/ogg" if adjunto.filename.lower().endswith('.ogg') else "audio/mp3"
+                        # Obtener el tipo MIME correcto basado en la extensión
+                        mime = obtener_mime_type(adjunto.filename)
+                        print(f"📁 Archivo: {adjunto.filename} | MIME: {mime}")
+                        
                         # 2. Subir el audio a Gemini especificando el mime_type
                         archivo_gemini = await asyncio.to_thread(
                             gemini_client.files.upload,
@@ -187,6 +202,7 @@ async def on_message(message):
                         )
                     except Exception as e:
                         await message.channel.send(f"Ocurrió un inconveniente procesando el audio: {e}")
+                        print(f"❌ Error procesando audio: {e}")
                     finally:
                         # Limpiar archivos temporales
                         if os.path.exists(nombre_input):
