@@ -13,9 +13,9 @@ import edge_tts
 warnings.filterwarnings("ignore", category=UserWarning)
 
 # --- CONFIGURACIÓN DE CLAVES API DESDE VARIABLES DE ENTORNO ---
-GEMINI_API_KEY = os.getenv("AQ.Ab8RN6LDmF2o1bFO8iWX7pm54D_mW3_FZEYdb125hGcH7lrC-Q", "")
-GROQ_API_KEY = os.getenv("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", "")
-DISCORD_TOKEN = os.getenv("MTU1NTM4NTY2NTMxMzU3MDkzNw.G67r5J.qhqfgSNdczlq5EkjwT4Ni5MmLZQ3ZnNpo0WprU", "")
+GEMINI_API_KEY = os.getenv("", "")
+GROQ_API_KEY = os.getenv("", "")
+DISCORD_TOKEN = os.getenv("", "")
 
 # Clientes de IA
 gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
@@ -255,7 +255,7 @@ async def salir(ctx):
 
 if __name__ == "__main__":
     if not DISCORD_TOKEN:
-        print("MTU1NTM4NTY2NTMxMzU3MDkzNw.G67r5J.qhqfgSNdczlq5EkjwT4Ni5MmLZQ3ZnNpo0WprU.")
+        print(".")
     else:
         bot.run(DISCORD_TOKEN)
 
