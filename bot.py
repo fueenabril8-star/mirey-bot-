@@ -8,7 +8,6 @@ from google.genai import types
 from groq import Groq
 import edge_tts  # Reemplazo de gTTS para voz MASCULINA real
 import time
-import random
 
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -26,9 +25,6 @@ gemini_degradado = False  # Flag para trackear si Gemini está degradado
 gemini_degradado_timestamp = 0
 TIEMPO_RECUPERACION = 300  # 5 minutos antes de reintentar Gemini
 
-# Canales donde MiRey participa automáticamente
-CANALES_ACTIVOS = {"vip"}  # En minúsculas para comparación
-
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="$", intents=intents)
@@ -45,7 +41,8 @@ Instrucciones estrictas de comportamiento:
 2. Espera a que los usuarios inicien la conversación o te hagan preguntas concretas.
 3. No te despidas al finalizar las respuestas ni uses cierres formales.
 4. Mantén las respuestas fluidas, concisas y directas (máximo 2 oraciones si es para hablar por micrófono).
-5. En el canal VIP sé más familiar y participativo, comenta sobre los temas sin necesidad de ser invitado.
+5. Participa en conversaciones naturales: comenta, opina, cuestiona cuando sea relevante.
+6. Si no tienes algo útil o interesante que decir en una conversación, no respondas.
 """
 
 config_gemini = types.GenerateContentConfig(system_instruction=PERSONALIDAD) if GEMINI_API_KEY else None
@@ -123,42 +120,46 @@ async def generar_audio_mp3(texto, nombre_archivo):
     await communicate.save(nombre_archivo)
 
 # --- PROCESADOR DE AUDIO ADJUNTO ---
-async def procesar_audio_y_responder_voz(ctx, ruta_audio_input):
-    archivo_respuesta = f"res_{ctx.author.id}_{ctx.message.id}.mp3"
+async def procesar_audio_y_responder(message, ruta_audio_input):
+    """Procesa audios y responde con mensaje de audio en el chat de texto"""
+    archivo_respuesta = f"res_{message.author.id}_{message.id}.mp3"
     archivo_gemini = None
+    
     try:
         if not gemini_client:
-            await ctx.send("El servicio de análisis de voz no está disponible actualmente.")
+            await message.channel.send("El servicio de análisis de voz no está disponible actualmente.")
             return
 
-        archivo_gemini = await asyncio.to_thread(
-            gemini_client.files.upload,
-            file=ruta_audio_input
-        )
-        prompt = "Escucha atentamente este audio de voz y responde directamente a lo que se pregunta o expresa, en máximo 2 oraciones de forma conversacional."
-        
-        response = await asyncio.to_thread(
-            gemini_client.models.generate_content,
-            model='gemini-3.8-flash',
-            contents=[archivo_gemini, prompt],
-            config=config_gemini
-        )
-        
-        texto_respuesta = response.text
-        await ctx.send(f"🗣️ **MiRey:** {texto_respuesta}")
-
-        await generar_audio_mp3(texto_respuesta, archivo_respuesta)
-
-        if ctx.voice_client and not ctx.voice_client.is_playing():
-            source = discord.FFmpegPCMAudio(archivo_respuesta)
-            ctx.voice_client.play(source)
-
-            while ctx.voice_client.is_playing():
-                await asyncio.sleep(0.5)
+        async with message.channel.typing():
+            # 1. Guardar el archivo localmente
+            # 2. Subir el audio a Gemini
+            archivo_gemini = await asyncio.to_thread(
+                gemini_client.files.upload,
+                file=ruta_audio_input
+            )
+            
+            prompt = "Escucha este audio. Responde de forma fluida, directa y concisa (máximo 2 o 3 oraciones)."
+            
+            response = await asyncio.to_thread(
+                gemini_client.models.generate_content,
+                model='gemini-3.8-flash',
+                contents=[archivo_gemini, prompt],
+                config=config_gemini
+            )
+            
+            texto_respuesta = response.text
+            # 3. Convertir la respuesta a audio MP3
+            await generar_audio_mp3(texto_respuesta, archivo_respuesta)
+            # 4. Responder en la sala de texto con el archivo de audio
+            await message.channel.send(
+                content=f"🗣️ **MiRey:** {texto_respuesta}",
+                file=discord.File(archivo_respuesta)
+            )
 
     except Exception as e:
-        await ctx.send(f"Ocurrió un inconveniente al procesar el audio: {e}")
+        await message.channel.send(f"Ocurrió un inconveniente procesando el audio: {e}")
     finally:
+        # Limpiar archivos temporales
         if archivo_gemini:
             try:
                 await asyncio.to_thread(gemini_client.files.delete, name=archivo_gemini.name)
@@ -176,97 +177,45 @@ async def on_ready():
 
 @bot.event
 async def on_message(message):
+    # Ignorar mensajes propios
     if message.author == bot.user:
         return
-
-    ctx = await bot.get_context(message)
-    canal_actual = message.channel.name.lower() if message.channel.name else ""
-    es_canal_activo = canal_actual in CANALES_ACTIVOS
     
-    # --- MANEJO DE ARCHIVOS ADJUNTOS ---
-    if message.attachments:
-        adjunto = message.attachments[0]
-        if any(adjunto.filename.lower().endswith(ext) for ext in ['.mp3', '.wav', '.ogg', '.m4a']):
-            if ctx.author.voice:
-                if not ctx.voice_client:
-                    await ctx.author.voice.channel.connect()
-                
-                nombre_temp = f"in_{message.id}.ogg"
-                await adjunto.save(nombre_temp)
-                
-                async with ctx.channel.typing():
-                    await procesar_audio_y_responder_voz(ctx, nombre_temp)
+    ctx = await bot.get_context(message)
+    
+    # --- MENCIÓN @MiRey: Procesa audios y responde con un mensaje de audio en el chat de texto ---
+    if bot.user in message.mentions or message.attachments:
+        # Verificar si envió un archivo de audio / nota de voz
+        if message.attachments:
+            adjunto = message.attachments[0]
+            if any(adjunto.filename.lower().endswith(ext) for ext in ['.mp3', '.wav', '.ogg', '.m4a']):
+                nombre_input = f"in_{message.id}.ogg"
+                await adjunto.save(nombre_input)
+                await procesar_audio_y_responder(message, nombre_input)
                 return
-            else:
-                async with ctx.channel.typing():
-                    nombre_input = f"in_{message.id}.ogg"
-                    nombre_output = f"respuesta_{message.id}.mp3"
-                    archivo_gemini = None
-                    
-                    try:
-                        await adjunto.save(nombre_input)
-                        archivo_gemini = await asyncio.to_thread(
-                            gemini_client.files.upload,
-                            file=nombre_input
-                        )
-                        
-                        prompt = "Escucha este audio. Responde de forma fluida, directa y concisa (máximo 2 o 3 oraciones)."
-                        
-                        response = await asyncio.to_thread(
-                            gemini_client.models.generate_content,
-                            model='gemini-3.8-flash',
-                            contents=[archivo_gemini, prompt],
-                            config=config_gemini
-                        )
-                        
-                        texto_respuesta = response.text
-                        await generar_audio_mp3(texto_respuesta, nombre_output)
-
-                        await message.channel.send(
-                            content=f"🗣️ **MiRey:** {texto_respuesta}",
-                            file=discord.File(nombre_output)
-                        )
-
-                    except Exception as e:
-                        await message.channel.send(f"Ocurrió un inconveniente procesando el audio: {e}")
-                    finally:
-                        if archivo_gemini:
-                            try:
-                                await asyncio.to_thread(gemini_client.files.delete, name=archivo_gemini.name)
-                            except Exception:
-                                pass
-                        if os.path.exists(nombre_input):
-                            os.remove(nombre_input)
-                        if os.path.exists(nombre_output):
-                            os.remove(nombre_output)
+        
+        # Si es solo una consulta de texto normal mencionándolo
+        if bot.user in message.mentions:
+            texto_limpio = message.content.replace(f"<@{bot.user.id}>", "").strip()
+            if not texto_limpio:
+                await message.channel.send("Hola. Por aquí ando.")
                 return
-
-    # --- MENCIONADO DIRECTAMENTE ---
-    if bot.user in message.mentions:
-        texto_limpio = message.content.replace(f"<@{bot.user.id}>", "").strip()
-        if not texto_limpio:
-            await message.channel.send("Hola. Por aquí ando.")
-            return
-
-        async with message.channel.typing():
-            try:
-                respuesta = await consultar_ia(texto_limpio)
-                await message.channel.send(respuesta)
-            except Exception as e:
-                await message.channel.send(f"Ocurrió un inconveniente: {e}")
-        return
-
-    # --- CANAL VIP: PARTICIPACIÓN AUTOMÁTICA (60% de probabilidad) ---
-    if es_canal_activo and message.content and not message.author.bot:
-        # Solo participa en conversaciones naturales (evita spam)
-        if random.random() < 0.6:  # 60% de probabilidad para no ser demasiado spammy
+            
             async with message.channel.typing():
                 try:
-                    respuesta = await consultar_ia(message.content)
+                    respuesta = await consultar_ia(texto_limpio)
                     await message.channel.send(respuesta)
                 except Exception as e:
-                    print(f"Error en VIP: {e}")
-
+                    await message.channel.send(f"Ocurrió un inconveniente: {e}")
+            return
+    
+    # --- PARTICIPACIÓN AUTOMÁTICA EN CONVERSACIONES (SIN MENCIÓN) ---
+    # El bot participa en conversaciones naturales cuando cree que tiene algo útil que decir
+    if message.content and not message.author.bot and not message.content.startswith("$"):
+        # Opcionalmente, agregar lógica para detectar si es pregunta o comentario dirigido al bot
+        # Por ahora, solo participa si se menciona
+        pass
+    
     await bot.process_commands(message)
 
 # --- COMANDOS DE VOZ ---
