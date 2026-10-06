@@ -13,9 +13,9 @@ import edge_tts
 warnings.filterwarnings("ignore", category=UserWarning)
 
 # --- CONFIGURACIÓN DE CLAVES API DESDE VARIABLES DE ENTORNO ---
-GEMINI_API_KEY = os.getenv("", "")
-GROQ_API_KEY = os.getenv("", "")
-DISCORD_TOKEN = os.getenv("", "")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "")
 
 # Clientes de IA
 gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
