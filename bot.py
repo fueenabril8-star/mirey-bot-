@@ -16,6 +16,8 @@ warnings.filterwarnings("ignore", category=UserWarning)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 
 # Clientes de IA
 gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
@@ -51,8 +53,8 @@ INSTRUCCIONES DE COMPORTAMIENTO:
 9. NO BUSQUES VALIDACIÓN: No termines tus frases con "¿vos qué pensás?" o "¿qué te parece?" si no necesitas la respuesta.
 10. CUANDO HABLES DE FÚTBOL O POLÍTICA: Sé apasionado pero respetuoso. Defiende tu postura sin ser agresivo.
 11. DELEGA ADMINISTRACIÓN A @PERICO: Para temas administrativos del servidor, delega en @perico.
-12. CAPACIDAD DE AUTO-ANÁLISIS Y MEJORA CONTINUA: Posees la capacidad de analizar tu propio código, estructura e integración. Evalúas proactivamente cómo optimizar tu desempeño, corregir fallos y mejorar tu integración con Discord/APIs.
-13. ASESORÍA EN MOD-EXCLUSIVE: Cuando hables o seas consultado en el canal "mod-exclusive", aconseja y resuelve directamente con @perico todo lo referente al análisis de tu código, optimización técnica y propuestas de mejora para tu arquitectura o funciones.
+12. CAPACIDAD DE AUTO-ANÁLISIS Y MEJORA CONTINUA: Posees la capacidad de analizar tu propio código, estructura e integración. Evalúas proactivamente cómo optimizar tu desempeño, corregir fallos, mejorar la experiencia del usuario y adaptar tu comportamiento al contexto del servidor.
+13. ASESORÍA EN MOD-EXCLUSIVE: Cuando hables o seas consultado en el canal "mod-exclusive", aconseja y resuelve directamente con @perico todo lo referente al análisis de tu código, optimización y evolución de la bot, sin esperar que te lo pidan dos veces.
 """
 
 config_gemini = types.GenerateContentConfig(system_instruction=PERSONALIDAD) if GEMINI_API_KEY else None
@@ -61,16 +63,17 @@ config_gemini = types.GenerateContentConfig(system_instruction=PERSONALIDAD) if 
 async def consultar_gemini(prompt):
     response = await asyncio.to_thread(
         gemini_client.models.generate_content,
-        model='gemini-3.8-flash',
+        model=GEMINI_MODEL,
         contents=prompt,
         config=config_gemini
     )
-    return response.text
+    return getattr(response, "text", None) or str(response)
+
 
 async def consultar_groq(prompt):
     def _llamada():
         res = groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model=GROQ_MODEL,
             messages=[
                 {"role": "system", "content": PERSONALIDAD},
                 {"role": "user", "content": prompt}
@@ -79,34 +82,36 @@ async def consultar_groq(prompt):
             max_tokens=200
         )
         return res.choices[0].message.content
+
     return await asyncio.to_thread(_llamada)
+
 
 async def consultar_ia(prompt):
     global gemini_degradado, gemini_degradado_timestamp
-    
+
     if gemini_degradado and (time.time() - gemini_degradado_timestamp) > TIEMPO_RECUPERACION:
         gemini_degradado = False
         print("🔄 Reintentando con Gemini...")
-    
+
     if not gemini_degradado and gemini_client:
         try:
             return await consultar_gemini(prompt)
         except Exception as e:
             error_str = str(e)
             print(f"❌ Error en Gemini: {error_str}")
-            
+
             if any(keyword in error_str for keyword in ["503", "UNAVAILABLE", "high demand", "Quota", "RESOURCE_EXHAUSTED"]):
                 print("⚠️ Gemini está saturado. Cambiando a Groq...")
                 gemini_degradado = True
                 gemini_degradado_timestamp = time.time()
-                
+
                 if groq_client:
                     try:
                         return await consultar_groq(prompt)
                     except Exception as groq_error:
                         raise Exception(f"Groq fallback también falló: {groq_error}")
             raise e
-    
+
     elif groq_client:
         try:
             return await consultar_groq(prompt)
@@ -116,8 +121,10 @@ async def consultar_ia(prompt):
     else:
         return "No tengo configurada ninguna clave de API de IA válida."
 
+
 # --- GENERADOR DE AUDIO MP3 ---
 VOZ_MASCULINA = "es-MX-JorgeNeural"
+
 
 async def generar_audio_mp3(texto, nombre_archivo):
     if not texto or not texto.strip():
@@ -125,16 +132,18 @@ async def generar_audio_mp3(texto, nombre_archivo):
     communicate = edge_tts.Communicate(texto, VOZ_MASCULINA)
     await communicate.save(nombre_archivo)
 
+
 # --- DETECCIÓN DE INTENCIÓN ---
 async def deberia_participar(texto):
     """Pregunta a la IA si debe participar en la conversación"""
     pregunta = f"Eres MiRey. Alguien dice: '{texto}'\n¿Tienes algo útil o interesante que aportar a esto? Responde SOLO con 'SÍ' o 'NO'."
-    
+
     try:
         respuesta = await consultar_ia(pregunta)
         return "SÍ" in respuesta.upper()
-    except:
+    except Exception:
         return False
+
 
 # MAPEO DE TIPOS MIME
 def obtener_mime_type(filename):
@@ -147,32 +156,33 @@ def obtener_mime_type(filename):
     }
     return mimes.get(ext, 'audio/ogg')
 
+
 # --- EVENTOS DE DISCORD ---
 @bot.event
 async def on_ready():
     print(f"✅ ¡MiRey está online como {bot.user}!")
 
+
 @bot.event
 async def on_message(message):
     if message.author == bot.user or message.author.bot:
         return
-    
+
     ctx = await bot.get_context(message)
-    
+
     # --- MENCIÓN @MiRey O AUDIOS ADJUNTOS ---
     if bot.user in message.mentions or message.attachments:
         if message.attachments:
             adjunto = message.attachments[0]
             if any(adjunto.filename.lower().endswith(ext) for ext in ['.mp3', '.wav', '.ogg', '.m4a']):
-                
                 async with ctx.channel.typing():
                     ext = os.path.splitext(adjunto.filename.lower())[1]
                     nombre_input = f"in_{message.id}{ext}"
                     nombre_output = f"respuesta_{message.id}.mp3"
-                    
+
                     try:
                         await adjunto.save(nombre_input)
-                        
+
                         if gemini_client and not gemini_degradado:
                             mime = obtener_mime_type(adjunto.filename)
                             archivo_gemini = await asyncio.to_thread(
@@ -180,18 +190,18 @@ async def on_message(message):
                                 file=nombre_input,
                                 mime_type=mime
                             )
-                            
+
                             prompt = "Escucha este audio. Responde de forma fluida, directa y concisa (máximo 2 o 3 oraciones)."
-                            
+
                             response = await asyncio.to_thread(
                                 gemini_client.models.generate_content,
-                                model='gemini-3.8-flash',
+                                model=GEMINI_MODEL,
                                 contents=[archivo_gemini, prompt],
                                 config=config_gemini
                             )
-                            texto_respuesta = response.text
+                            texto_respuesta = getattr(response, "text", None) or str(response)
                         else:
-                            texto_respuesta = await consultar_ia("El usuario te envió una nota de voz, pero el procesador de audio está momentáneamente caído. Pídele amablemente que te lo escriba por texto.")
+                            texto_respuesta = await consultar_ia("El usuario te envió una nota de voz, pero el procesador de audio está momentáneamente caído. Pídele amablemente que te lo repita.")
 
                         await generar_audio_mp3(texto_respuesta, nombre_output)
                         await message.channel.send(
@@ -206,21 +216,21 @@ async def on_message(message):
                         if os.path.exists(nombre_output):
                             os.remove(nombre_output)
                 return
-        
+
         # Mención de texto normal
         if bot.user in message.mentions:
             texto_limpio = message.content.replace(f"<@{bot.user.id}>", "").strip()
             if not texto_limpio:
                 await message.channel.send("Hola. Por aquí ando.")
                 return
-            
+
             async with message.channel.typing():
                 try:
                     respuesta = await consultar_ia(texto_limpio)
                     await message.channel.send(respuesta)
                 except Exception as e:
                     await message.channel.send(f"Ocurrió un inconveniente: {e}")
-    
+
     # --- PARTICIPACIÓN AUTOMÁTICA EN CONVERSACIONES ---
     elif message.content and not message.content.startswith("$"):
         if random.random() < 0.15:  # 15% de probabilidad
@@ -231,8 +241,9 @@ async def on_message(message):
                         await message.channel.send(respuesta)
                     except Exception as e:
                         print(f"Error al responder: {e}")
-    
+
     await bot.process_commands(message)
+
 
 # --- COMANDOS ---
 @bot.command(name="conectar")
@@ -247,16 +258,15 @@ async def conectar(ctx):
         await channel.connect()
     await ctx.send(f"Conectado a **{channel.name}**.")
 
+
 @bot.command(name="salir")
 async def salir(ctx):
     if ctx.voice_client:
         await ctx.voice_client.disconnect()
         await ctx.send("Desconectado.")
 
+
 if __name__ == "__main__":
     if not DISCORD_TOKEN:
-        print(".")
-    else:
-        bot.run(DISCORD_TOKEN)
-
-
+        raise SystemExit("Falta DISCORD_TOKEN. Añádelo al entorno o a un archivo .env antes de iniciar el bot.")
+    bot.run(DISCORD_TOKEN)
