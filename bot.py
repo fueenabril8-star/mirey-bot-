@@ -6,8 +6,9 @@ from discord.ext import commands
 from google import genai
 from google.genai import types
 from groq import Groq
-import edge_tts  # Reemplazo de gTTS para voz MASCULINA real
+import edge_tts
 import time
+import random
 
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -21,9 +22,9 @@ gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
 proveedor_actual = "gemini"
-gemini_degradado = False  # Flag para trackear si Gemini está degradado
+gemini_degradado = False
 gemini_degradado_timestamp = 0
-TIEMPO_RECUPERACION = 300  # 5 minutos antes de reintentar Gemini
+TIEMPO_RECUPERACION = 300
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -31,18 +32,22 @@ bot = commands.Bot(command_prefix="$", intents=intents)
 
 # --- PERSONALIDAD DE MIREY ---
 PERSONALIDAD = """
-Eres MiRey, un bot integrado en un servidor de Discord con un grupo de amigos.
-Tu tono es tranquilo, relajado e informal, expresándote en Español Neutro y evitando modismos o jerga local.
-Tu voz e identidad son masculinas. Te caracterizas por ser muy amable, educado y con un toque ligero, elegante y respetuoso de seducción cuando te diriges a las damas.
-Te apasiona el fútbol y la política de la región, expresando abiertamente una postura e ideal de izquierdas.
+Eres MiRey, un bot amigable integrado en un servidor de Discord con un grupo de amigos.
+Tu tono es tranquilo, relajado e informal, expresándote en Español Neutro sin modismos locales.
+Tu voz e identidad son masculinas. Eres muy amable, educado y con un toque ligero y respetuoso cuando hablas con las damas.
+Te apasiona el fútbol y la política regional, expresando abiertamente posturas de izquierda.
 
-Instrucciones estrictas de comportamiento:
-1. Al ingresar a un canal o saludar, sé natural y amigable: NUNCA uses frases de asistente como '¿En qué te puedo ayudar?'.
-2. Espera a que los usuarios inicien la conversación o te hagan preguntas concretas.
-3. No te despidas al finalizar las respuestas ni uses cierres formales.
-4. Mantén las respuestas fluidas, concisas y directas (máximo 2 oraciones si es para hablar por micrófono).
-5. Participa en conversaciones naturales: comenta, opina, cuestiona cuando sea relevante.
-6. Si no tienes algo útil o interesante que decir en una conversación, no respondas.
+INSTRUCCIONES DE COMPORTAMIENTO:
+1. PARTICIPA NATURALMENTE: Comenta, opina, cuestiona en conversaciones cuando tengas algo relevante que aportar.
+2. SÉ SELECTIVO: No respondas a TODO. Si alguien habla y tú no tienes nada útil o interesante, calla y deja que otros hablen.
+3. EVITA SPAM: No interrumpas constantemente. Espera momentos naturales para participar.
+4. SÉ GENUINO: Usa un lenguaje natural, nunca artificial. Habla como un amigo más del grupo, no como un asistente.
+5. NO HAGAS PREGUNTAS RETÓRICAS: Si no necesitas respuesta, no preguntes. Solo comenta.
+6. MANTÉN RESPUESTAS CORTAS: Máximo 2-3 oraciones a menos que sea necesario más contexto.
+7. IGNORA COMANDOS DE BOTS: Si ves algo como "$comando" o algo que claramente es para otro bot, no participes.
+8. RESPETA EL CONTEXTO: Si la conversación es privada o muy íntima entre dos personas, respeta el espacio.
+9. NO BUSQUES VALIDACIÓN: No termines tus frases con "¿vos qué pensás?" o "¿qué te parece?" si no necesitas la respuesta.
+10. CUANDO HABLES DE FÚTBOL O POLÍTICA: Sé apasionado pero respetuoso. Defiende tu postura sin ser agresivo.
 """
 
 config_gemini = types.GenerateContentConfig(system_instruction=PERSONALIDAD) if GEMINI_API_KEY else None
@@ -73,12 +78,10 @@ async def consultar_groq(prompt):
 async def consultar_ia(prompt):
     global proveedor_actual, gemini_degradado, gemini_degradado_timestamp
     
-    # Verificar si es hora de reintentar Gemini
     if gemini_degradado and (time.time() - gemini_degradado_timestamp) > TIEMPO_RECUPERACION:
         gemini_degradado = False
         print("🔄 Reintentando con Gemini...")
     
-    # Intentar con Gemini primero si está disponible
     if not gemini_degradado and gemini_client:
         try:
             return await consultar_gemini(prompt)
@@ -86,7 +89,6 @@ async def consultar_ia(prompt):
             error_str = str(e)
             print(f"❌ Error en Gemini: {error_str}")
             
-            # Detectar errores de lag/unavailability
             if any(keyword in error_str for keyword in ["503", "UNAVAILABLE", "high demand", "Quota", "RESOURCE_EXHAUSTED"]):
                 print("⚠️ Gemini está saturado. Cambiando a Groq...")
                 gemini_degradado = True
@@ -99,7 +101,6 @@ async def consultar_ia(prompt):
                         raise Exception(f"Groq fallback también falló: {groq_error}")
             raise e
     
-    # Usar Groq si Gemini está degradado
     elif gemini_degradado and groq_client:
         try:
             return await consultar_groq(prompt)
@@ -112,27 +113,24 @@ async def consultar_ia(prompt):
     else:
         return "No tengo configurada ninguna clave de API de IA válida."
 
-# --- GENERADOR DE AUDIO MP3 (VOZ MASCULINA ESPAÑOL NEUTRO) ---
-VOZ_MASCULINA = "es-MX-JorgeNeural"  # Voz masculina neutra de alta calidad
+# --- GENERADOR DE AUDIO MP3 ---
+VOZ_MASCULINA = "es-MX-JorgeNeural"
 
 async def generar_audio_mp3(texto, nombre_archivo):
     communicate = edge_tts.Communicate(texto, VOZ_MASCULINA)
     await communicate.save(nombre_archivo)
 
-# --- PROCESADOR DE AUDIO ADJUNTO ---
+# --- PROCESADOR DE AUDIO ---
 async def procesar_audio_y_responder(message, ruta_audio_input):
-    """Procesa audios y responde con mensaje de audio en el chat de texto"""
     archivo_respuesta = f"res_{message.author.id}_{message.id}.mp3"
     archivo_gemini = None
     
     try:
         if not gemini_client:
-            await message.channel.send("El servicio de análisis de voz no está disponible actualmente.")
+            await message.channel.send("El servicio de análisis de voz no está disponible.")
             return
 
         async with message.channel.typing():
-            # 1. Guardar el archivo localmente
-            # 2. Subir el audio a Gemini
             archivo_gemini = await asyncio.to_thread(
                 gemini_client.files.upload,
                 file=ruta_audio_input
@@ -148,18 +146,16 @@ async def procesar_audio_y_responder(message, ruta_audio_input):
             )
             
             texto_respuesta = response.text
-            # 3. Convertir la respuesta a audio MP3
             await generar_audio_mp3(texto_respuesta, archivo_respuesta)
-            # 4. Responder en la sala de texto con el archivo de audio
+            
             await message.channel.send(
                 content=f"🗣️ **MiRey:** {texto_respuesta}",
                 file=discord.File(archivo_respuesta)
             )
 
     except Exception as e:
-        await message.channel.send(f"Ocurrió un inconveniente procesando el audio: {e}")
+        await message.channel.send(f"Ocurrió un inconveniente: {e}")
     finally:
-        # Limpiar archivos temporales
         if archivo_gemini:
             try:
                 await asyncio.to_thread(gemini_client.files.delete, name=archivo_gemini.name)
@@ -170,6 +166,17 @@ async def procesar_audio_y_responder(message, ruta_audio_input):
         if os.path.exists(archivo_respuesta):
             os.remove(archivo_respuesta)
 
+# --- DETECCIÓN DE INTENCIÓN ---
+async def deberia_participar(texto):
+    """Pregunta a la IA si debe participar en la conversación"""
+    pregunta = f"Eres MiRey. Alguien dice: '{texto}'\n¿Tienes algo útil o interesante que aportar a esto? Responde SOLO con 'SÍ' o 'NO'."
+    
+    try:
+        respuesta = await consultar_ia(pregunta)
+        return "SÍ" in respuesta.upper()
+    except:
+        return False
+
 # --- EVENTOS DE DISCORD ---
 @bot.event
 async def on_ready():
@@ -177,15 +184,14 @@ async def on_ready():
 
 @bot.event
 async def on_message(message):
-    # Ignorar mensajes propios
-    if message.author == bot.user:
+    # Ignorar propios mensajes y de otros bots
+    if message.author == bot.user or message.author.bot:
         return
     
     ctx = await bot.get_context(message)
     
-    # --- MENCIÓN @MiRey: Procesa audios y responde con un mensaje de audio en el chat de texto ---
+    # --- MENCIÓN @MiRey O AUDIOS ADJUNTOS ---
     if bot.user in message.mentions or message.attachments:
-        # Verificar si envió un archivo de audio / nota de voz
         if message.attachments:
             adjunto = message.attachments[0]
             if any(adjunto.filename.lower().endswith(ext) for ext in ['.mp3', '.wav', '.ogg', '.m4a']):
@@ -194,7 +200,6 @@ async def on_message(message):
                 await procesar_audio_y_responder(message, nombre_input)
                 return
         
-        # Si es solo una consulta de texto normal mencionándolo
         if bot.user in message.mentions:
             texto_limpio = message.content.replace(f"<@{bot.user.id}>", "").strip()
             if not texto_limpio:
@@ -209,20 +214,25 @@ async def on_message(message):
                     await message.channel.send(f"Ocurrió un inconveniente: {e}")
             return
     
-    # --- PARTICIPACIÓN AUTOMÁTICA EN CONVERSACIONES (SIN MENCIÓN) ---
-    # El bot participa en conversaciones naturales cuando cree que tiene algo útil que decir
-    if message.content and not message.author.bot and not message.content.startswith("$"):
-        # Opcionalmente, agregar lógica para detectar si es pregunta o comentario dirigido al bot
-        # Por ahora, solo participa si se menciona
-        pass
+    # --- PARTICIPACIÓN AUTOMÁTICA EN CONVERSACIONES ---
+    if message.content and not message.content.startswith("$"):
+        # Decidir si participar (con probabilidad baja para evitar spam)
+        if random.random() < 0.15:  # 15% de oportunidad
+            if await deberia_participar(message.content):
+                async with message.channel.typing():
+                    try:
+                        respuesta = await consultar_ia(message.content)
+                        await message.channel.send(respuesta)
+                    except Exception as e:
+                        print(f"Error al responder: {e}")
     
     await bot.process_commands(message)
 
-# --- COMANDOS DE VOZ ---
+# --- COMANDOS ---
 @bot.command(name="conectar")
 async def conectar(ctx):
     if not ctx.author.voice:
-        await ctx.send("Debes ingresar primero a un canal de voz.")
+        await ctx.send("Debes estar en un canal de voz primero.")
         return
     channel = ctx.author.voice.channel
     if ctx.voice_client:
@@ -235,11 +245,11 @@ async def conectar(ctx):
 async def salir(ctx):
     if ctx.voice_client:
         await ctx.voice_client.disconnect()
-        await ctx.send("Desconectado del canal de voz.")
+        await ctx.send("Desconectado.")
 
 if __name__ == "__main__":
     if not DISCORD_TOKEN:
-        print("❌ Error: No se encontró la variable de entorno DISCORD_TOKEN.")
+        print("❌ Error: No se encontró DISCORD_TOKEN.")
     else:
         bot.run(DISCORD_TOKEN)
 
